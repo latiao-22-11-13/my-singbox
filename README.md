@@ -5,4 +5,4 @@
 ## 🚀 安装命令
 
 ```bash
-bash <(curl -Ls [https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/sb.sh](https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/sb.sh))
+bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/sb.sh)
