@@ -6,7 +6,7 @@ bash <(curl -Ls [https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/ma
 ```
 2. TCP Brutal 开启
 ```bash
-bash <(curl -Ls [https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/brutal.sh](https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/brutal.sh))
+bash <(curl -Ls (https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/brutal.sh))
 ```
 3. Sing-box 安装
 ```bash
