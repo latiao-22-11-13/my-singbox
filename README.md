@@ -6,4 +6,4 @@
 安装 XanMod 内核以支持 TCP Brutal 等特性。
 
 ```bash
-bash <(curl -Ls [https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/xanmod.sh](https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/xanmod.sh))
+bash <(curl -Ls (https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/xanmod.sh))
