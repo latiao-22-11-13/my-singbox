@@ -9,8 +9,13 @@ clear_screen() {
   fi
 }
 
+pause() {
+  echo
+  read -r -e -p "按回车继续..." _ || true
+}
+
 if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
-  echo "[ERR] 请用 root 执行：sudo $0"
+  echo " 请用 root 执行：sudo $0"
   exit 1
 fi
 
@@ -20,29 +25,25 @@ if [[ -t 0 ]]; then
 fi
 
 NFT_CONF="/etc/nftables.conf"
-
 PORTSYNC_SCRIPT="/usr/local/sbin/nftables-port-sync.sh"
 DEFAULTS_FILE="/etc/default/nftables-port-sync"
 SVC_FILE="/etc/systemd/system/nftables-port-sync.service"
 
 trim() { awk '{$1=$1};1' <<<"${1:-}"; }
 
-pause() {
-  echo
-  read -r -e -p "按回车继续..." _ || true
-}
-
 normalize_ports() {
-  local raw
+  local raw p
+  local out=()
+
   raw="$(trim "${1:-}")"
   raw="${raw//,/ }"
   raw="$(echo "$raw" | tr -s ' ' ' ')"
+
   [[ -z "$raw" ]] && { echo ""; return 0; }
 
-  local out=() p
   for p in $raw; do
-    [[ "$p" =~ ^[0-9]+$ ]] || { echo "[ERR] 端口必须是数字：$p" >&2; return 1; }
-    (( p>=1 && p<=65535 )) || { echo "[ERR] 端口范围必须 1-65535：$p" >&2; return 1; }
+    [[ "$p" =~ ^[0-9]+$ ]] || { echo " 端口必须是数字：$p" >&2; return 1; }
+    (( p>=1 && p<=65535 )) || { echo " 端口范围必须 1-65535：$p" >&2; return 1; }
     out+=("$p")
   done
 
@@ -51,84 +52,106 @@ normalize_ports() {
 
 guess_ssh_ports() {
   local ports=""
-  ports="$(ss -lntpH 2>/dev/null | awk '/sshd/ {n=split($4,a,":"); p=a[n]; if(p~/^[0-9]+$/) print p}' \
-    | sort -u | paste -sd, - || true)"
+
+  ports="$(ss -lntpH 2>/dev/null | awk '
+    $1=="LISTEN" && index($0, "users:((\"sshd\"")>0 {
+      addr=$4; gsub(/.*:/,"",addr);
+      if (addr ~ /^[0-9]+$/) print addr
+    }' | sort -n -u | paste -sd, - || true)"
+
   if [[ -z "$ports" && -f /etc/ssh/sshd_config ]]; then
     ports="$(awk 'BEGIN{IGNORECASE=1} $1=="port"{print $2}' /etc/ssh/sshd_config 2>/dev/null \
-      | sort -u | paste -sd, - || true)"
+      | sort -n -u | paste -sd, - || true)"
   fi
+
   [[ -z "$ports" ]] && ports="22"
   echo "$ports"
 }
 
-guess_sb_ports() {
-  local ports=""
-  ports="$(ss -lntpH 2>/dev/null | awk '/sing-box/ { addr=$4; n=split(addr,a,":"); p=a[n]; if (p ~ /^[0-9]+$/) print p }' \
-    | sort -u | paste -sd, - || true)"
-  echo "$ports"
+sanitize_proc() {
+  local s="${1:-}"
+  s="$(echo "$s" | tr '[:upper:]' '[:lower:]')"
+  s="$(echo "$s" | sed 's/[^a-z0-9_]/_/g; s/__*/_/g; s/^_//; s/_$//')"
+  [[ -z "$s" ]] && s="unknown"
+  echo "$s"
 }
 
-guess_sui_ports() {
-  local ports=""
-  ports="$(ss -lntpH 2>/dev/null | awk '/\("sui"/ { addr=$4; n=split(addr,a,":"); p=a[n]; if (p ~ /^[0-9]+$/) print p }' \
-    | sort -u | paste -sd, - || true)"
-  echo "$ports"
+scan_listen_ports() {
+  echo "========== 扫描监听端口 =========="
+  ss -lntupH 2>/dev/null | awk '{
+    proto=$1; addr=$5; gsub(/.*:/,"",addr); if (addr !~ /^[0-9]+$/) next
+    proc="(unknown)"; pos=index($0,"users:((\""); if (pos>0){t=substr($0,pos+9); sub(/".*/,"",t); gsub(/"/,"",t); if(t!="") proc=t}
+    printf "%-4s %-6s %s\n", proto, addr, proc
+  }' | sort -k1,1 -k2,2n -k3,3
+
+  echo
+  ss -lntupH 2>/dev/null | awk '{
+    proto=$1; addr=$5; gsub(/.*:/,"",addr); if (addr !~ /^[0-9]+$/) next
+    proc="(unknown)"; pos=index($0,"users:((\""); if (pos>0){t=substr($0,pos+9); sub(/".*/,"",t); gsub(/"/,"",t); if(t!="") proc=t}
+    ports[proc, proto] = ports[proc, proto] (ports[proc, proto] ? "," : "") addr
+    seen_proc[proc]=1; seen_proto[proc, proto]=1
+  } END{
+    for (p in seen_proc) {
+      print p " =>"
+      if (seen_proto[p,"tcp"]) printf "  - %-4s: %s\n", "tcp", ports[p,"tcp"]
+      if (seen_proto[p,"udp"]) printf "  - %-4s: %s\n", "udp", ports[p,"udp"]
+      print ""
+    }
+  }' | sed '/^$/N;/^\n$/D'
+}
+
+scan_proc_ports_tab() {
+  ss -lntupH 2>/dev/null | awk '{
+    addr=$5; gsub(/.*:/,"",addr); if (addr !~ /^[0-9]+$/) next
+    proc="(unknown)"; pos=index($0,"users:((\""); if (pos>0){t=substr($0,pos+9); sub(/".*/,"",t); gsub(/"/,"",t); if(t!="") proc=t}
+    print proc "\t" addr
+  }' | sort -u | awk -F'\t' '{
+    p=$1; port=$2; gsub(/"/,"",p)
+    if (p=="" || port=="") next
+    ports[p]=ports[p] (ports[p] ? "," : "") port
+    procs[p]=1
+  } END{
+    for (p in procs) print p "\t" ports[p]
+  }'
 }
 
 restore_or_remove_nft_conf() {
   cat >"$NFT_CONF" <<'EOF'
 #!/usr/sbin/nft -f
+flush ruleset
+table inet filter {
+  chain input   { type filter hook input priority filter; policy accept; }
+  chain forward { type filter hook forward priority filter; policy accept; }
+  chain output  { type filter hook output priority filter; policy accept; }
+}
+EOF
+  echo " 已写回默认 nftables.conf 模板：$NFT_CONF"
+}
+
+write_nft_conf_dynamic() {
+  local ssh_ports="$1"
+  local allow_ping="$2"
+  shift 2
+  local lines=("$@")
+
+  cat >"$NFT_CONF" <<EOF
+#!/usr/sbin/nft -f
 
 flush ruleset
 
 table inet filter {
-  chain input {
-    type filter hook input priority filter;
-  }
-  chain forward {
-    type filter hook forward priority filter;
-  }
-  chain output {
-    type filter hook output priority filter;
-  }
-}
-EOF
-  echo "[OK] 已写回默认 nftables.conf 模板：$NFT_CONF"
-}
-
-write_files_install() {
-  local ssh_ports="$1"
-  local sb_ports="$2"
-  local sui_ports="$3"
-  local tcp_ports="$4"
-  local allow_ping="${5:-yes}" 
-
-  local sb_trim="${sb_ports//[[:space:]]/}"
-  local sui_trim="${sui_ports//[[:space:]]/}"
-  local extra_trim="${tcp_ports//[[:space:]]/}"
-
-  cat >"$NFT_CONF" <<EOF
-table inet filter {
-  set ssh_tcp_ports { type inet_service; elements = { $ssh_ports } }
+  set ssh_ports { type inet_service; elements = { ${ssh_ports} } }
 EOF
 
-  if [[ -n "$sb_trim" ]]; then
-    cat >>"$NFT_CONF" <<EOF
-  set sb_tcp_ports { type inet_service; elements = { $sb_ports } }
-EOF
-  fi
-
-  if [[ -n "$sui_trim" ]]; then
-    cat >>"$NFT_CONF" <<EOF
-  set sui_tcp_ports { type inet_service; elements = { $sui_ports } }
-EOF
-  fi
-
-  if [[ -n "$extra_trim" ]]; then
-    cat >>"$NFT_CONF" <<EOF
-  set other_tcp_ports { type inet_service; elements = { $tcp_ports } }
-EOF
-  fi
+  local line proc ports p_s setname
+  for line in "${lines[@]}"; do
+    proc="${line%%$'\t'*}"
+    ports="${line#*$'\t'}"
+    [[ -z "${proc// /}" || -z "${ports// /}" ]] && continue
+    p_s="$(sanitize_proc "$proc")"
+    setname="listen_${p_s}_ports"
+    echo "  set ${setname} { type inet_service; elements = { ${ports} } }" >>"$NFT_CONF"
+  done
 
   cat >>"$NFT_CONF" <<'EOF'
 
@@ -164,32 +187,21 @@ EOF
 
   cat >>"$NFT_CONF" <<'EOF'
 
-    tcp dport @ssh_tcp_ports ct state new limit rate 10/minute accept
+    tcp dport @ssh_ports ct state new limit rate 10/minute accept
+    tcp dport @ssh_ports drop
 EOF
 
-  if [[ -n "$sb_trim" ]]; then
-    cat >>"$NFT_CONF" <<'EOF'
-    tcp dport @sb_tcp_ports ct count over 200 drop
-    tcp dport @sb_tcp_ports ct state new limit rate over 60/second drop
-    tcp dport @sb_tcp_ports ct state new accept
-EOF
-  fi
+  for line in "${lines[@]}"; do
+    proc="${line%%$'\t'*}"
+    ports="${line#*$'\t'}"
+    [[ -z "${proc// /}" || -z "${ports// /}" ]] && continue
+    p_s="$(sanitize_proc "$proc")"
+    setname="listen_${p_s}_ports"
+    cat >>"$NFT_CONF" <<EOF
 
-  if [[ -n "$sui_trim" ]]; then
-    cat >>"$NFT_CONF" <<'EOF'
-    tcp dport @sui_tcp_ports ct count over 200 drop
-    tcp dport @sui_tcp_ports ct state new limit rate over 60/second drop
-    tcp dport @sui_tcp_ports ct state new accept
+    meta l4proto { tcp, udp, sctp, dccp } th dport @${setname} accept  # ${proc}
 EOF
-  fi
-
-  if [[ -n "$extra_trim" ]]; then
-    cat >>"$NFT_CONF" <<'EOF'
-    tcp dport @other_tcp_ports ct count over 200 drop
-    tcp dport @other_tcp_ports ct state new limit rate over 60/second drop
-    tcp dport @other_tcp_ports ct state new accept
-EOF
-  fi
+  done
 
   cat >>"$NFT_CONF" <<'EOF'
   }
@@ -205,166 +217,183 @@ EOF
   }
 }
 EOF
+}
+
+write_files_install() {
+  local ssh_ports="$1"
+  local allow_ping="$2"
+  local allow_procs_str="$3"
+  shift 3
+  local allow_lines=("$@")
+
+  write_nft_conf_dynamic "$ssh_ports" "$allow_ping" "${allow_lines[@]}"
 
   cat >"$PORTSYNC_SCRIPT" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-FAMILY="inet"
-TABLE="filter"
-
-MGMT_SET="ssh_tcp_ports"
-SB_SET="sb_tcp_ports"
-SUI_SET="sui_tcp_ports"
-EXTRA_SET="other_tcp_ports"
-
+NFT_CONF="/etc/nftables.conf"
 DEFAULTS_FILE="/etc/default/nftables-port-sync"
 
+trim(){ awk '{$1=$1};1' <<<"${1:-}"; }
+
+sanitize_proc() {
+  local s="${1:-}"
+  s="$(echo "$s" | tr '[:upper:]' '[:lower:]')"
+  s="$(echo "$s" | sed 's/[^a-z0-9_]/_/g; s/__*/_/g; s/^_//; s/_$//')"
+  [[ -z "$s" ]] && s="unknown"
+  echo "$s"
+}
+
+guess_ssh_ports() {
+  local ports=""
+  ports="$(ss -lntpH 2>/dev/null | awk '/sshd/ {addr=$4; gsub(/.*:/,"",addr); if(addr~/^[0-9]+$/) print addr}' \
+    | sort -n -u | paste -sd, - || true)"
+  [[ -z "$ports" && -f /etc/ssh/sshd_config ]] && ports="$(awk 'BEGIN{IGNORECASE=1} $1=="port"{print $2}' /etc/ssh/sshd_config 2>/dev/null \
+    | sort -n -u | paste -sd, - || true)"
+  [[ -z "$ports" ]] && ports="22"
+  echo "$ports"
+}
+
+scan_proc_ports_tab() {
+  ss -lntupH 2>/dev/null | awk '{
+    addr=$5; gsub(/.*:/,"",addr); if (addr !~ /^[0-9]+$/) next
+    proc="(unknown)"; pos=index($0,"users:((\""); if (pos>0){t=substr($0,pos+9); sub(/".*/,"",t); gsub(/"/,"",t); if(t!="") proc=t}
+    print proc "\t" addr
+  }' | sort -u | awk -F'\t' '{
+    p=$1; port=$2; gsub(/"/,"",p)
+    if (p=="" || port=="") next
+    ports[p]=ports[p] (ports[p] ? "," : "") port
+    procs[p]=1
+  } END{
+    for (p in procs) print p "\t" ports[p]
+  }'
+}
+
 SSH_PORTS_OVERRIDE=""
-SB_PORTS_OVERRIDE=""
-SUI_PORTS_OVERRIDE=""
-EXTRA_PORTS_OVERRIDE=""
+ALLOW_PING="yes"
+ALLOW_PROCS=""
+[[ -f "$DEFAULTS_FILE" ]] && source "$DEFAULTS_FILE" || true
+ALLOW_PING="${ALLOW_PING:-yes}"
 
-if [[ -f "$DEFAULTS_FILE" ]]; then
-  # shellcheck disable=SC1090
-  source "$DEFAULTS_FILE" || true
-fi
-
-normalize_ports() {
-  local raw="${1:-}"
-  raw="${raw//,/ }"
-  raw="$(echo "$raw" | tr -s ' ' ' ' | awk '{$1=$1};1')"
-  [[ -z "$raw" ]] && { echo ""; return 0; }
-  local out=() p
-  for p in $raw; do
-    [[ "$p" =~ ^[0-9]+$ ]] || return 1
-    (( p>=1 && p<=65535 )) || return 1
-    out+=("$p")
-  done
-  printf "%s\n" "${out[@]}" | sort -n -u | paste -sd, -
-}
-
-has_set() {
-  nft list set "$FAMILY" "$TABLE" "$1" >/dev/null 2>&1
-}
-
-MGMT_LIST=""
+ssh_ports=""
 if [[ -n "${SSH_PORTS_OVERRIDE:-}" ]]; then
-  MGMT_LIST="$(normalize_ports "$SSH_PORTS_OVERRIDE" || true)"
-fi
-
-if [[ -z "$MGMT_LIST" ]]; then
-  mapfile -t MGMT_PORTS < <(
-    ss -lntpH 2>/dev/null | awk '
-      /sshd/ {
-        addr=$4
-        n=split(addr, a, ":")
-        port=a[n]
-        if (port ~ /^[0-9]+$/) print port
-      }
-    ' | sort -u
-  )
-  if [[ ${#MGMT_PORTS[@]} -eq 0 ]]; then
-    mapfile -t MGMT_PORTS < <(
-      awk 'BEGIN{IGNORECASE=1} $1=="port"{print $2}' /etc/ssh/sshd_config 2>/dev/null | sort -u
-    )
-  fi
-  if [[ ${#MGMT_PORTS[@]} -eq 0 ]]; then
-    MGMT_PORTS=(22)
-  fi
-  MGMT_LIST="$(printf "%s\n" "${MGMT_PORTS[@]}" | paste -sd, -)"
-fi
-
-SB_LIST=""
-if [[ -n "${SB_PORTS_OVERRIDE:-}" ]]; then
-  SB_LIST="$(normalize_ports "$SB_PORTS_OVERRIDE" || true)"
+  ssh_ports="$(trim "${SSH_PORTS_OVERRIDE:-}")"
 else
-  mapfile -t SB_PORTS < <(
-    ss -lntpH 2>/dev/null | awk '
-      /sing-box/ {
-        addr=$4
-        n=split(addr, a, ":")
-        port=a[n]
-        if (port ~ /^[0-9]+$/) print port
-      }
-    ' | sort -u
-  )
-  if [[ ${#SB_PORTS[@]} -gt 0 ]]; then
-    SB_LIST="$(printf "%s\n" "${SB_PORTS[@]}" | paste -sd, -)"
-  fi
+  ssh_ports="$(guess_ssh_ports)"
 fi
+ssh_ports="$(trim "$ssh_ports")"
+[[ -z "$ssh_ports" ]] && exit 0
 
-SUI_LIST=""
-if [[ -n "${SUI_PORTS_OVERRIDE:-}" ]]; then
-  SUI_LIST="$(normalize_ports "$SUI_PORTS_OVERRIDE" || true)"
+declare -A MAP=()
+while IFS=$'\t' read -r p csv; do
+  p="$(trim "${p//\"/}")"
+  [[ -z "$p" ]] && continue
+  MAP["$p"]="$csv"
+done < <(scan_proc_ports_tab)
+
+allow_lines=()
+for p in ${ALLOW_PROCS:-}; do
+  csv="${MAP[$p]:-}"
+  [[ -z "${csv// /}" ]] && continue
+  allow_lines+=("$p"$'\t'"$csv")
+done
+
+tmp="$(mktemp /tmp/nftables.conf.XXXXXX)"
+
+cat >"$tmp" <<EOF2
+#!/usr/sbin/nft -f
+
+flush ruleset
+
+table inet filter {
+  set ssh_ports { type inet_service; elements = { ${ssh_ports} } }
+EOF2
+
+for line in "${allow_lines[@]}"; do
+  proc="${line%%$'\t'*}"
+  ports="${line#*$'\t'}"
+  [[ -z "${proc// /}" || -z "${ports// /}" ]] && continue
+  p_s="$(sanitize_proc "$proc")"
+  setname="listen_${p_s}_ports"
+  echo "  set ${setname} { type inet_service; elements = { ${ports} } }" >>"$tmp"
+done
+
+cat >>"$tmp" <<'EOF2'
+
+  chain input {
+    type filter hook input priority 0;
+    policy drop;
+
+    iif lo accept
+    ct state established,related accept
+
+    ip6 nexthdr icmpv6 icmpv6 type {
+      nd-router-solicit, nd-router-advert,
+      nd-neighbor-solicit, nd-neighbor-advert,
+      nd-redirect,
+      packet-too-big, time-exceeded, parameter-problem,
+      destination-unreachable
+    } accept
+EOF2
+
+if [[ "$ALLOW_PING" == "yes" ]]; then
+  cat >>"$tmp" <<'EOF2'
+
+    icmp type echo-request accept
+    icmpv6 type echo-request accept
+EOF2
 else
-  mapfile -t SUI_PORTS < <(
-    ss -lntpH 2>/dev/null | awk '
-      /\("sui"/ {
-        addr=$4
-        n=split(addr, a, ":")
-        port=a[n]
-        if (port ~ /^[0-9]+$/) print port
-      }
-    ' | sort -u
-  )
-  if [[ ${#SUI_PORTS[@]} -gt 0 ]]; then
-    SUI_LIST="$(printf "%s\n" "${SUI_PORTS[@]}" | paste -sd, -)"
-  fi
+  cat >>"$tmp" <<'EOF2'
+
+    icmp type echo-request drop
+    icmpv6 type echo-request drop
+EOF2
 fi
 
-EXTRA_LIST=""
-if [[ -n "${EXTRA_PORTS_OVERRIDE:-}" ]]; then
-  EXTRA_LIST="$(normalize_ports "$EXTRA_PORTS_OVERRIDE" || true)"
-fi
+cat >>"$tmp" <<'EOF2'
 
-if has_set "$MGMT_SET"; then
-  nft -f - <<EOF_IN
-flush set $FAMILY $TABLE $MGMT_SET
-add element $FAMILY $TABLE $MGMT_SET { $MGMT_LIST }
-EOF_IN
-  echo "[OK] ssh_tcp_ports => $MGMT_LIST"
-else
-  echo "[WARN] 未找到 set $MGMT_SET（可能 nftables.conf 未加载）"
-fi
+    tcp dport @ssh_ports ct state new limit rate 10/minute accept
+    tcp dport @ssh_ports drop
+EOF2
 
-if [[ -n "$SB_LIST" ]] && has_set "$SB_SET"; then
-  nft -f - <<EOF_SB
-flush set $FAMILY $TABLE $SB_SET
-add element $FAMILY $TABLE $SB_SET { $SB_LIST }
-EOF_SB
-  echo "[OK] sb_tcp_ports  => $SB_LIST"
-fi
+for line in "${allow_lines[@]}"; do
+  proc="${line%%$'\t'*}"
+  ports="${line#*$'\t'}"
+  [[ -z "${proc// /}" || -z "${ports// /}" ]] && continue
+  p_s="$(sanitize_proc "$proc")"
+  setname="listen_${p_s}_ports"
+  cat >>"$tmp" <<EOF2
 
-if [[ -n "$SUI_LIST" ]] && has_set "$SUI_SET"; then
-  nft -f - <<EOF_SUI
-flush set $FAMILY $TABLE $SUI_SET
-add element $FAMILY $TABLE $SUI_SET { $SUI_LIST }
-EOF_SUI
-  echo "[OK] sui_tcp_ports => $SUI_LIST"
-fi
+    meta l4proto { tcp, udp, sctp, dccp } th dport @${setname} accept  # ${proc}
+EOF2
+done
 
-if [[ -n "$EXTRA_LIST" ]] && has_set "$EXTRA_SET"; then
-  nft -f - <<EOF_EX
-flush set $FAMILY $TABLE $EXTRA_SET
-add element $FAMILY $TABLE $EXTRA_SET { $EXTRA_LIST }
-EOF_EX
-  echo "[OK] other_tcp_ports => $EXTRA_LIST"
-fi
+cat >>"$tmp" <<'EOF2'
+  }
+
+  chain forward { type filter hook forward priority 0; policy drop; }
+  chain output  { type filter hook output priority 0; policy accept; }
+}
+EOF2
+
+nft -c -f "$tmp"
+install -m 0644 "$tmp" "$NFT_CONF"
+rm -f "$tmp"
+nft -f "$NFT_CONF"
 EOF
   chmod 0755 "$PORTSYNC_SCRIPT"
 
   cat >"$DEFAULTS_FILE" <<EOF
 SSH_PORTS_OVERRIDE="${ssh_ports}"
-SB_PORTS_OVERRIDE="${sb_ports}"
-SUI_PORTS_OVERRIDE="${sui_ports}"
-EXTRA_PORTS_OVERRIDE="${tcp_ports}"
+ALLOW_PING="${allow_ping}"
+ALLOW_PROCS="${allow_procs_str}"
 EOF
   chmod 0644 "$DEFAULTS_FILE"
 
   cat >"$SVC_FILE" <<'EOF'
 [Unit]
-Description=Sync nftables port sets (ssh/sing-box/sui/extra)
+Description=Sync nftables.conf from current listening ports (boot-time safety)
 After=network-online.target nftables.service
 Wants=network-online.target
 
@@ -381,74 +410,78 @@ EOF
 
 install_fw() {
   echo "========== 安装 =========="
+  echo
+  scan_listen_ports
+  read -r -e -p "(已显示当前监听端口) 按回车继续进入端口配置..." _ || true
+  echo
 
-  local default_ssh default_sb default_sui
-  local in_ssh in_sb in_sui in_extra
-  local ssh_ports sb_ports sui_ports
-  local tcp_ports=""  
-
-  local allow_ping="yes"
+  local default_ssh in_ssh ssh_ports
   default_ssh="$(guess_ssh_ports)"
   echo "检测到 SSH 端口：${default_ssh}"
-  read -r -e -p "请输入要放行的 SSH 端口 [默认: ${default_ssh}] : " in_ssh || true
+  read -r -e -p "请输入要放行的 SSH 端口（可多端口，空格/逗号分隔）[默认: ${default_ssh}] : " in_ssh || true
   in_ssh="$(trim "${in_ssh:-}")"
   [[ -z "$in_ssh" ]] && in_ssh="$default_ssh"
   ssh_ports="$(normalize_ports "$in_ssh")"
-
-  sb_ports=""
-  default_sb="$(guess_sb_ports)"
-  if [[ -n "$default_sb" ]]; then
-    echo "检测到 sing-box 正在监听的 TCP 端口：${default_sb}"
-    read -r -e -p "请输入需要放行的 sing-box TCP 端口（可多端口，逗号分隔）[默认: ${default_sb}] : " in_sb || true
-    in_sb="$(trim "${in_sb:-}")"
-    [[ -z "$in_sb" ]] && in_sb="$default_sb"
-    sb_ports="$(normalize_ports "$in_sb")"
-  else
-    echo "[WARN] 未检测到 sing-box 正在监听的 TCP 端口。"
-    read -r -e -p "如需手动放行 sing-box TCP 端口（可多端口；留空跳过）: " in_sb || true
-    in_sb="$(trim "${in_sb:-}")"
-    [[ -n "$in_sb" ]] && sb_ports="$(normalize_ports "$in_sb")"
-  fi
-
-  sui_ports=""
-  default_sui="$(guess_sui_ports)"
-  if [[ -n "$default_sui" ]]; then
-    echo "检测到 SUI 正在监听的 TCP 端口：${default_sui}"
-    read -r -e -p "请输入需要放行的 SUI TCP 端口（可多端口，空格/逗号分隔）[默认: ${default_sui}] : " in_sui || true
-    in_sui="$(trim "${in_sui:-}")"
-    [[ -z "$in_sui" ]] && in_sui="$default_sui"
-    sui_ports="$(normalize_ports "$in_sui")"
-  else
-    echo "[WARN] 未检测到 SUI 正在监听的 TCP 端口。"
-    read -r -e -p "如需手动放行 SUI TCP 端口（可多端口；留空跳过）: " in_sui || true
-    in_sui="$(trim "${in_sui:-}")"
-    [[ -n "$in_sui" ]] && sui_ports="$(normalize_ports "$in_sui")"
-  fi
-
-  if [[ -z "${sb_ports//[[:space:]]/}" && -z "${sui_ports//[[:space:]]/}" ]]; then
-    echo
-    echo "[INFO] 未检测/配置 sing-box 与 SUI 端口。你可以在这里输入其它需要放行的 TCP 端口（可留空跳过）。"
-  fi
-  read -r -e -p "请输入额外需要放行的 TCP 端口 tcp_ports（可多端口；留空跳过）: " in_extra || true
-  in_extra="$(trim "${in_extra:-}")"
-  [[ -n "$in_extra" ]] && tcp_ports="$(normalize_ports "$in_extra")"
-
-
   echo
+
+  declare -A PROC_DEF=()
+  local proc csv
+  while IFS=$'\t' read -r proc csv; do
+    proc="$(trim "${proc//\"/}")"
+    [[ -z "$proc" ]] && continue
+    PROC_DEF["$proc"]="$csv"
+  done < <(scan_proc_ports_tab)
+
+  mapfile -t PROCS < <(printf "%s\n" "${!PROC_DEF[@]}" | sort)
+
+  declare -A ALLOW_MAP=()
+  local in ports
+  for proc in "${PROCS[@]}"; do
+    [[ "$proc" == "sshd" || "$proc" == "(unknown)" ]] && continue
+    csv="${PROC_DEF[$proc]}"
+    [[ -z "${csv// /}" ]] && continue
+
+    echo "检测到 ${proc} 端口：${csv}"
+    read -r -e -p "请输入要放行的 ${proc} 端口（可多端口，空格/逗号分隔）[默认: ${csv}]: " in || true
+    in="$(trim "${in:-}")"
+
+    [[ "$in" == "-" ]] && { echo; continue; }
+    [[ -z "$in" ]] && in="$csv"
+
+    ports="$(normalize_ports "$in")"
+    [[ -n "${ports// /}" ]] && ALLOW_MAP["$proc"]="$ports"
+    echo
+  done
+
+  local in_ping allow_ping="yes"
   read -r -e -p "是否允许 Ping（ICMP echo-request）？[Y/n] : " in_ping || true
   in_ping="$(trim "${in_ping:-}")"
   case "${in_ping,,}" in
     ""|"y"|"yes") allow_ping="yes" ;;
     "n"|"no")     allow_ping="no" ;;
-    *) echo "[WARN] 输入无效，默认允许 Ping"; allow_ping="yes" ;;
+    *)            echo " 输入无效，默认允许 Ping"; allow_ping="yes" ;;
   esac
 
+  allow_lines=()
+  allow_procs_str=""
+  for proc in "${!ALLOW_MAP[@]}"; do
+    allow_lines+=("$proc"$'\t'"${ALLOW_MAP[$proc]}")
+    allow_procs_str+="$proc "
+  done
+  allow_procs_str="$(trim "$allow_procs_str")"
+
   echo
-  echo "[INFO] 端口配置汇总："
-  echo "  SSH 放行端口：${ssh_ports}"
-  echo "  sing-box 放行端口：${sb_ports:-(未配置)}"
-  echo "  SUI 放行端口：${sui_ports:-(未配置)}"
-  echo "  EXTRA 放行端口：${tcp_ports:-(未配置)}"
+  echo "端口配置汇总："
+  echo "  SSH 放行端口（仅 TCP + 限速）：${ssh_ports}"
+  if [[ ${#allow_lines[@]} -gt 0 ]]; then
+    echo "  动态进程放行："
+    for line in "${allow_lines[@]}"; do
+      echo "    - ${line%%$'\t'*} : ${line#*$'\t'}"
+    done
+    echo "  动态放行策略：端口型协议 tcp/udp/sctp/dccp 全放行"
+  else
+    echo "  动态进程放行：无（你全部跳过了）"
+  fi
   echo "  Ping：$([[ "$allow_ping" == "yes" ]] && echo "允许" || echo "禁止")"
   echo
 
@@ -456,23 +489,18 @@ install_fw() {
   apt-get update -y
   apt-get install -y nftables iproute2
 
-  write_files_install "$ssh_ports" "$sb_ports" "$sui_ports" "$tcp_ports" "$allow_ping"
+  write_files_install "$ssh_ports" "$allow_ping" "$allow_procs_str" "${allow_lines[@]}"
 
   systemctl daemon-reload
   systemctl enable --now nftables
-
   nft -f "$NFT_CONF"
 
   systemctl enable nftables-port-sync.service
   systemctl start nftables-port-sync.service || true
 
   echo
-  echo "[DONE] 安装完成。检查命令："
+  echo " 安装完成。检查命令："
   echo "  nft list ruleset"
-  echo "  nft list set inet filter ssh_tcp_ports"
-  echo "  nft list set inet filter sb_tcp_ports"
-  echo "  nft list set inet filter sui_tcp_ports"
-  echo "  nft list set inet filter other_tcp_ports"
   echo "  systemctl status nftables --no-pager"
   echo "  systemctl status nftables-port-sync.service --no-pager"
   echo
@@ -480,7 +508,7 @@ install_fw() {
 
 uninstall_fw() {
   echo "========== 卸载 =========="
-  echo "[INFO] 卸载将："
+  echo " 卸载将："
   echo "  - 删除本脚本安装的 service / defaults / portsync 脚本"
   echo "  - 写回默认 nftables.conf 模板"
   echo "  - 关闭 nftables 服务并取消自启"
@@ -488,29 +516,21 @@ uninstall_fw() {
 
   read -r -e -p "确认卸载？输入 YES 继续：" confirm || true
   confirm="$(trim "${confirm:-}")"
-  if [[ "$confirm" != "YES" ]]; then
-    echo "[INFO] 已取消卸载。"
-    return 0
-  fi
+  [[ "$confirm" != "YES" ]] && { echo " 已取消卸载。"; return 0; }
 
   systemctl stop nftables-port-sync.service 2>/dev/null || true
   systemctl disable nftables-port-sync.service 2>/dev/null || true
 
-  rm -f "$SVC_FILE" 2>/dev/null || true
-  rm -f "$DEFAULTS_FILE" 2>/dev/null || true
-  rm -f "$PORTSYNC_SCRIPT" 2>/dev/null || true
+  rm -f "$SVC_FILE" "$DEFAULTS_FILE" "$PORTSYNC_SCRIPT" 2>/dev/null || true
 
   restore_or_remove_nft_conf
-
   nft -f "$NFT_CONF" 2>/dev/null || true
+
   systemctl disable --now nftables 2>/dev/null || true
   systemctl daemon-reload || true
 
   echo
-  echo "[DONE] 卸载完成。你可以检查："
-  echo "  systemctl status nftables-port-sync.service --no-pager"
-  echo "  systemctl status nftables --no-pager"
-  echo "  ls -l $SVC_FILE $DEFAULTS_FILE $PORTSYNC_SCRIPT $NFT_CONF"
+  echo " 卸载完成。"
 }
 
 show_menu() {
@@ -534,7 +554,7 @@ main() {
       1) install_fw; pause ;;
       2) uninstall_fw; pause ;;
       0) echo "退出。"; exit 0 ;;
-      *) echo "[ERR] 请输入 0/1/2"; pause ;;
+      *) echo " 请输入 0/1/2"; pause ;;
     esac
   done
 }
