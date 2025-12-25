@@ -1252,7 +1252,7 @@ EOF
     echo -e "${GREEN}>>> 锁定客户端连接 IP: ${server_ip}${PLAIN}"
 
     cat > ${SB_CLIENT}/${filename} <<EOF
-{ "type": "shadowsocks", "tag": "ss-out", "server": "${server_ip}", "server_port": ${port}, "method": "2022-blake3-aes-128-gcm", "password": "${password}", "tcp_fast_open": true, "packet_encoding": "xudp" }
+{ "type": "shadowsocks", "tag": "ss-out", "server": "${server_ip}", "server_port": ${port}, "method": "2022-blake3-aes-128-gcm", "password": "${password}", "tcp_fast_open": true, }
 EOF
     format_json ${SB_SERVER}/${filename}; format_json ${SB_CLIENT}/${filename}; update_route_rules; apply_changes
 }
