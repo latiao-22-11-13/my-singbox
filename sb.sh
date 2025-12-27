@@ -38,6 +38,7 @@ purge_dpkg_residue() {
 
 install_base() {
     purge_dpkg_residue
+    # 1. 依赖安装
     if ! command -v curl &> /dev/null || ! command -v jq &> /dev/null || ! command -v unzip &> /dev/null; then
         echo -e "${GREEN}>>> 正在初始化系统依赖 (含 unzip)...${PLAIN}"
         if [[ -f /etc/redhat-release ]]; then
@@ -48,13 +49,30 @@ install_base() {
             apt-get update -y && apt-get install -y curl wget jq tar socat openssl cron net-tools unzip
         fi
     fi
+
+    # 2. 目录初始化
     mkdir -p ${SB_SERVER} ${SB_CLIENT} ${SB_CERT_ACME} ${SB_CERT_SELF} ${SB_RULE} ${SB_NODES} ${REALM_ROOT}
     for f in ${SB_SERVER}/*.json.json; do [ -e "$f" ] && mv "$f" "${f%.json}"; done
+
+    # 3. [核心修改] 智能快捷键设置 (仅在 Sing-box 已安装时触发)
     if [[ -f "${SB_BIN}" ]]; then
+        
+        # 情况 A: 本地文件运行 (下载后运行的) -> 直接复制 "$0"
         if [[ -f "$0" && "$0" != "/usr/bin/sb" ]]; then
             cp -f "$0" /usr/bin/sb
             chmod +x /usr/bin/sb
-            echo -e "${GREEN}>>> 检测到 Sing-box 已安装，快捷键 'sb' 维护成功！${PLAIN}"
+            echo -e "${GREEN}>>> 检测到 Sing-box 已安装，快捷键 'sb' 维护成功 (本地模式)！${PLAIN}"
+
+        # 情况 B: 管道运行 (bash <(curl...)) -> 从 GitHub 下载自身
+        # 逻辑：如果是管道运行，且系统里还没有 sb 命令，就去你的仓库下载
+        elif [[ ! -f "/usr/bin/sb" ]]; then
+            echo -e "${YELLOW}>>> 检测到管道运行且已安装内核，正在配置快捷键...${PLAIN}"
+            
+            # 👇 已填入你的专属链接 👇
+            curl -L -o /usr/bin/sb "https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/sb.sh"
+            
+            chmod +x /usr/bin/sb
+            echo -e "${GREEN}>>> 快捷键 'sb' 已设置成功 (在线模式)！${PLAIN}"
         fi
     fi
 }
