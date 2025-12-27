@@ -50,6 +50,13 @@ install_base() {
     fi
     mkdir -p ${SB_SERVER} ${SB_CLIENT} ${SB_CERT_ACME} ${SB_CERT_SELF} ${SB_RULE} ${SB_NODES} ${REALM_ROOT}
     for f in ${SB_SERVER}/*.json.json; do [ -e "$f" ] && mv "$f" "${f%.json}"; done
+    if [[ -f "${SB_BIN}" ]]; then
+        if [[ -f "$0" && "$0" != "/usr/bin/sb" ]]; then
+            cp -f "$0" /usr/bin/sb
+            chmod +x /usr/bin/sb
+            echo -e "${GREEN}>>> 检测到 Sing-box 已安装，快捷键 'sb' 维护成功！${PLAIN}"
+        fi
+    fi
 }
 
 format_json() {
@@ -246,32 +253,14 @@ download_rules_local() {
 }
 
 generate_base_config() {
-    local cur_ver=${1#v}; [[ -z "$cur_ver" ]] && cur_ver=$(${SB_BIN} version | head -n 1 | awk '{print $3}')
-    echo -e "${GREEN}>>> 生成基础配置 (00_base.json) 适配版本: ${cur_ver}...${PLAIN}"
+    # Tom 建议：基础配置极简，无 DNS 模块，日志静默 (error 级别)
+    echo -e "${GREEN}>>> 生成极简基础配置 (00_base.json) [Tom静默版]...${PLAIN}"
 
-    if [[ "$cur_ver" =~ ^1\.1[2-9] ]] || version_ge $cur_ver "1.12"; then
-        cat > ${SB_SERVER}/00_base.json <<EOF
+    cat > ${SB_SERVER}/00_base.json <<EOF
 {
-  "log": { "level": "info", "timestamp": true },
-  "dns": {
-    "servers": [
-      { "tag": "google", "type": "tls", "server": "8.8.8.8" },
-      { "tag": "local", "type": "local" }
-    ],
-    "rules": [
-      { "server": "local", "clash_mode": "Direct" },
-      { "server": "local", "domain_suffix": [".cn"] }
-    ],
-    "final": "google",
-    "strategy": "prefer_ipv6"
-  }
+  "log": { "level": "error", "timestamp": true }
 }
 EOF
-    else
-        cat > ${SB_SERVER}/00_base.json <<EOF
-{ "log": { "level": "info", "timestamp": true }, "dns": { "servers": [{"tag":"google","address":"tls://8.8.8.8","detour":"direct"},{"tag":"local","address":"223.5.5.5","detour":"direct"}], "rules": [{"outbound":"any","server":"local"}] } }
-EOF
-    fi
     format_json "${SB_SERVER}/00_base.json"
 }
 
@@ -295,7 +284,7 @@ update_route_rules() {
     [[ -z "$cur_ver" ]] && cur_ver=$(${SB_BIN} version 2>/dev/null | head -n 1 | awk '{print $3}')
     cur_ver=${cur_ver#v}
 
-    echo -e "${YELLOW}>>> 正在构建智能路由规则 (适配内核: v${cur_ver})...${PLAIN}"
+    echo -e "${YELLOW}>>> [Tom最终版] 生成智能极简路由 (修复崩溃 + 保留分流)...${PLAIN}"
     rm -f ${SB_SERVER}/03_upstream_*.json
 
     local rules_json=""
@@ -318,17 +307,10 @@ EOF
 EOF
         fi
 
-        # --- [核心修改] 智能拆分规则类型 ---
-        # 逻辑：从 RULES 变量中提取内容，自动归类
-
-        # 1. 提取 Geosite (匹配 "geosite-xxx")
+        # --- [核心逻辑保留] 智能拆分规则类型 ---
         local site_items=$(echo "$RULES" | grep -o '"geosite-[^"]*"' | tr '\n' ',' | sed 's/,$//')
-
-        # 2. 提取 Domain (匹配 "xxx" 但不包含 geosite-)
-        # grep -v "geosite-" 排除掉 geosite 规则，剩下的就是域名
         local domain_items=$(echo "$RULES" | grep -o '"[^"]*"' | grep -v '"geosite-' | tr '\n' ',' | sed 's/,$//')
 
-        # 3. 分别生成路由对象 (指向同一个 Outbound TAG)
         if [[ -n "$site_items" ]]; then
              rules_json="${rules_json} { \"rule_set\": [${site_items}], \"outbound\": \"${TAG}\" },"
         fi
@@ -338,34 +320,27 @@ EOF
         fi
     done
 
-    # 3. 通用规则定义 (保持不变)
+    # 3. 通用规则定义 (Tom 优化版)
+    # 只保留可能用于“分流”的规则，彻底删除了 Games/Ads/GeoIP-CN 的定义
     local common_rules='
       { "tag": "geosite-openai", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-openai.srs", "download_detour": "direct" },
+      { "tag": "geosite-anthropic", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-anthropic.srs", "download_detour": "direct" },
       { "tag": "geosite-google-gemini", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-google-gemini.srs", "download_detour": "direct" },
       { "tag": "geosite-category-ai-chat-!cn", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ai-chat-!cn.srs", "download_detour": "direct" },
-      { "tag": "geosite-anthropic", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-anthropic.srs", "download_detour": "direct" },
       { "tag": "geosite-netflix", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-netflix.srs", "download_detour": "direct" },
       { "tag": "geosite-disney", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-disney.srs", "download_detour": "direct" },
-      { "tag": "geosite-tiktok", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-tiktok.srs", "download_detour": "direct" },
-      { "tag": "geosite-category-games@cn", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-games@cn.srs", "download_detour": "direct" },
-      { "tag": "geosite-category-ads-all", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs", "download_detour": "direct" },
-      { "tag": "geoip-cn", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs", "download_detour": "direct" }
+      { "tag": "geosite-tiktok", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-tiktok.srs", "download_detour": "direct" }
     '
 
-    local extra_field=""
-    if echo "$cur_ver" | grep -qE "^1\.(1[2-9]|[2-9][0-9])"; then
-        extra_field='"default_domain_resolver": "local",'
-    fi
-
     # 生成最终 route.json
+    # 修复点：移除了 "default_domain_resolver" 和 "dns-out"
     cat > ${SB_SERVER}/01_route.json <<EOF
 {
   "route": {
-    ${extra_field}
     "rules": [
+      { "protocol": "dns", "outbound": "direct" },
+      { "ip_is_private": true, "outbound": "block" },
       ${rules_json}
-      { "protocol": "dns", "outbound": "dns-out" },
-      { "rule_set": ["geosite-category-games@cn", "geoip-cn", "geosite-category-ads-all"], "outbound": "block" },
       { "outbound": "direct" }
     ],
     "rule_set": [
@@ -375,6 +350,8 @@ EOF
   }
 }
 EOF
+    # 修复 JSON 格式
+    sed -i 's/, \+{\"outbound\": \"direct\"}/, {\"outbound\": \"direct\"}/' ${SB_SERVER}/01_route.json
     format_json ${SB_SERVER}/01_route.json
 }
 
