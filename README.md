@@ -20,7 +20,11 @@ bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/mai
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/auto-tcp.sh)
 ```
-6.TCP BDP 自动调优
+6.自用TCP调优
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/net-optimization.sh)
+```
+7.TCP BDP 自动调优
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/tcp_bdp.sh)
 ```
