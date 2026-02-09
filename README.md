@@ -14,7 +14,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/mai
 ```
 4. 防火墙配置 (install-fw)
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/install-fw.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/fw.sh)
 ```
 5.VPS 网络优化脚本 (Reality+Mux+Brutal 专用版)
 ```bash
