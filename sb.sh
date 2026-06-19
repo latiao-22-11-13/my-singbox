@@ -139,6 +139,106 @@ install_sbwpph_tool() {
 }
 
 version_ge() { [[ "$(printf "%s\n%s" "$1" "$2" | sort -V | tail -n1)" == "$1" ]]; }
+# ==========================================================
+# 智能规则解析：用户输入 → geosite 标签名
+# ==========================================================
+resolve_geosite() {
+    local input=$(echo "$1" | tr '[:upper:]' '[:lower:]' | xargs)
+    # 常用别名映射
+    case "$input" in
+        google|谷歌) echo "geosite-google" ;;
+        youtube|油管|yt) echo "geosite-youtube" ;;
+        chatgpt|openai) echo "geosite-openai" ;;
+        claude|anthropic) echo "geosite-anthropic" ;;
+        gemini|deepmind) echo "geosite-google-gemini" ;;
+        copilot|github-copilot) echo "geosite-github-copilot" ;;
+        ai|ai全家桶) echo "geosite-category-ai-chat-!cn" ;;
+        netflix|奈飞) echo "geosite-netflix" ;;
+        disney|迪士尼|disney+) echo "geosite-disney" ;;
+        tiktok|抖音国际) echo "geosite-tiktok" ;;
+        telegram|tg) echo "geosite-telegram" ;;
+        twitter|x) echo "geosite-twitter" ;;
+        facebook|fb|meta) echo "geosite-facebook" ;;
+        instagram|ins) echo "geosite-instagram" ;;
+        whatsapp|wa) echo "geosite-whatsapp" ;;
+        line) echo "geosite-line" ;;
+        telegram) echo "geosite-telegram" ;;
+        github|gh) echo "geosite-github" ;;
+        steam) echo "geosite-steam" ;;
+        apple|苹果) echo "geosite-apple" ;;
+        microsoft|微软) echo "geosite-microsoft" ;;
+        amazon|aws) echo "geosite-amazon" ;;
+        spotify) echo "geosite-spotify" ;;
+        twitch) echo "geosite-twitch" ;;
+        reddit) echo "geosite-reddit" ;;
+        discord) echo "geosite-discord" ;;
+        slack) echo "geosite-slack" ;;
+        zoom) echo "geosite-zoom" ;;
+        bilibili|b站|bili) echo "geosite-bilibili" ;;
+        hbo|hbo-max) echo "geosite-hbo" ;;
+        hulu) echo "geosite-hulu" ;;
+        abema) echo "geosite-abema" ;;
+        naver) echo "geosite-naver" ;;
+        nhk) echo "geosite-nhk" ;;
+        kakao) echo "geosite-kakao" ;;
+        ads|广告) echo "geosite-category-ads-all" ;;
+        cn|国内|china) echo "geosite-cn" ;;
+        geosite-*) echo "$input" ;;  # 已经是完整 geosite 名
+        *) echo "geosite-${input}" ;;  # 直接拼接
+    esac
+}
+
+# 智能规则输入交互 (返回格式化的 RULES 字符串)
+smart_rule_input() {
+    local rules=""
+    local rule_names=""
+    local first=1
+
+    echo -e "${YELLOW}输入要分流的服务名称，多个用逗号分隔${PLAIN}"
+    echo -e "${YELLOW}支持: google, chatgpt, netflix, telegram, github, bilibili, ...${PLAIN}"
+    echo -e "${YELLOW}也可以直接输入 geosite-xxx 或域名后缀如 .jp${PLAIN}"
+    echo -e "${YELLOW}输入完毕后回车确认${PLAIN}"
+    echo ""
+    read -p ">>> " input_str
+
+    [[ -z "$input_str" ]] && echo "" && return
+
+    # 按逗号分隔，逐个处理
+    IFS=',' read -r -a items <<< "$input_str"
+    for item in "${items[@]}"; do
+        item=$(echo "$item" | xargs)  # trim
+        [[ -z "$item" ]] && continue
+
+        local geosite_tag=""
+        local display_name=""
+
+        if [[ "$item" == .* ]]; then
+            # 域名后缀模式
+            geosite_tag="$item"
+            display_name="$item"
+        elif [[ "$item" == geosite-* ]]; then
+            # 完整 geosite 名
+            geosite_tag="$item"
+            display_name="${item#geosite-}"
+        else
+            # 智能解析
+            geosite_tag=$(resolve_geosite "$item")
+            display_name="$item"
+        fi
+
+        if [[ $first -eq 1 ]]; then
+            rules=""${geosite_tag}""
+            rule_names="${display_name}"
+            first=0
+        else
+            rules="${rules}, "${geosite_tag}""
+            rule_names="${rule_names} + ${display_name}"
+        fi
+    done
+
+    echo "$rules|${rule_names}"
+}
+
 
 # ==========================================================
 # [新增] IP 获取逻辑 (读取物理网卡，剔除 Warp/Tun/Docker)
@@ -442,17 +542,36 @@ EOF
         fi
     done
 
-    # 3. 通用规则定义 (Tom 优化版)
-    # 只保留可能用于“分流”的规则，彻底删除了 Games/Ads/GeoIP-CN 的定义
-    local common_rules='
-      { "tag": "geosite-openai", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-openai.srs", "download_detour": "direct" },
-      { "tag": "geosite-anthropic", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-anthropic.srs", "download_detour": "direct" },
-      { "tag": "geosite-google-gemini", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-google-gemini.srs", "download_detour": "direct" },
-      { "tag": "geosite-category-ai-chat-!cn", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ai-chat-!cn.srs", "download_detour": "direct" },
-      { "tag": "geosite-netflix", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-netflix.srs", "download_detour": "direct" },
-      { "tag": "geosite-disney", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-disney.srs", "download_detour": "direct" },
-      { "tag": "geosite-tiktok", "type": "remote", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-tiktok.srs", "download_detour": "direct" }
-    '
+    # 3. 动态收集所有节点实际使用的 geosite 标签
+    local used_geosites=()
+    for f in ${SB_NODES}/*.conf; do
+        [[ ! -f "$f" ]] && continue
+        local node_rules=$(grep "^RULES=" "$f" | cut -d= -f2 | sed "s/^'//;s/'$//" )
+        while read -r tag; do
+            [[ -n "$tag" ]] && used_geosites+=("$tag")
+        done < <(echo "$node_rules" | grep -oE '"geosite-[^"]+"|"\\.[a-z.]+"' | tr -d '"' | sort -u)
+    done
+    mapfile -t used_geosites < <(printf '%s\n' "${used_geosites[@]}" | sort -u)
+
+    local common_rules=""
+    local base_site="https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set"
+    local base_geo="https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set"
+    for tag in "${used_geosites[@]}"; do
+        [[ -z "$tag" ]] && continue
+        local url=""
+        if [[ "$tag" == geoip-* ]]; then
+            url="${base_geo}/${tag}.srs"
+        elif [[ "$tag" == .* ]]; then
+            continue
+        else
+            url="${base_site}/${tag}.srs"
+        fi
+        if [[ -n "$common_rules" ]]; then
+            common_rules="${common_rules},"
+        fi
+        common_rules="${common_rules}
+      { \"tag\": \"${tag}\", \"type\": \"remote\", \"format\": \"binary\", \"url\": \"${url}\", \"download_detour\": \"direct\" }"
+    done
 
     # 生成最终 route.json
     if version_ge "$cur_ver" "1.13"; then
@@ -1697,34 +1816,18 @@ add_wpph_rule() {
     read -p "给规则起个名 (Tag，例: warp-netflix): " tag
     [[ -z "$tag" ]] && return
 
-    echo -e "请选择分流目标:"
-    echo -e "1. AI 智能全家桶 (OpenAI/Claude/Gemini)"
-    echo -e "2. Netflix"
-    echo -e "3. Disney+"
-    echo -e "4. TikTok"
-    echo -e "5. 自定义 geosite (例如: bilibili)"
-    echo -e "6. 自定义 域名后缀 (例如: .uk)"
-    read -p "-> " r_opt
+    echo -e "${YELLOW}输入要分流的服务名称 (多个用逗号分隔)${PLAIN}"
+    echo -e "  常用: google, chatgpt, netflix, telegram, github, bilibili, ..."
+    echo -e "  也支持: geosite-xxx 或域名后缀如 .jp"
+    read -p ">>> " service_input
 
-    local rules=""
-    local rule_name=""
-    case "$r_opt" in
-        1) rules="\"geosite-openai\", \"geosite-anthropic\", \"geosite-google-gemini\", \"geosite-category-ai-chat-!cn\""; rule_name="AI-Services" ;;
-        2) rules="\"geosite-netflix\""; rule_name="Netflix" ;;
-        3) rules="\"geosite-disney\""; rule_name="Disney+" ;;
-        4) rules="\"geosite-tiktok\""; rule_name="TikTok" ;;
-        5)
-            read -p "输入 geosite 代码 (逗号分隔): " c
-            rules=$(echo "$c" | sed 's/,/","/g' | sed 's/^/"geosite-/g' | sed 's/$/"/g')
-            rule_name="Custom-Geo"
-            ;;
-        6)
-            read -p "输入域名后缀 (逗号分隔): " c
-            rules=$(echo "$c" | sed 's/,/","/g' | sed 's/^/"./g' | sed 's/$/"/g')
-            rule_name="Custom-Domain"
-            ;;
-        *) return ;;
-    esac
+    local rules="" rule_name=""
+    if [[ -n "$service_input" ]]; then
+        local result=$(smart_rule_input <<< "$service_input")
+        rules=$(echo "$result" | cut -d'|' -f1)
+        rule_name=$(echo "$result" | cut -d'|' -f2)
+    fi
+    [[ -z "$rules" ]] && return
 
     # 写入配置 (注意 TYPE=socks, IP=127.0.0.1)
     echo "TAG=$tag" > ${SB_NODES}/${tag}.conf
@@ -1761,26 +1864,17 @@ add_ss_node() {
         echo -e "${RED}错误：所有字段都必须填写！${PLAIN}"; return
     fi
 
-    echo -e "----------------------------"
-    echo -e "请选择该节点初始分流目标:"
-    echo -e "1. AI 智能全家桶 (OpenAI/Claude/Gemini) [推荐]"
-    echo -e "2. Netflix"
-    echo -e "3. Disney+"
-    echo -e "4. TikTok"
-    echo -e "5. 自定义 geosite (例如: bilibili)"
-    echo -e "6. 自定义 域名后缀 (例如: .uk)"
-    read -p "-> " r_opt
+    echo -e "${YELLOW}输入要分流的服务名称 (多个用逗号分隔)${PLAIN}"
+    echo -e "  常用: google, chatgpt, netflix, telegram, github, bilibili, ..."
+    read -p ">>> " service_input
 
-    local rules=""; local rule_name=""
-    case "$r_opt" in
-        1) rules="\"geosite-openai\", \"geosite-anthropic\", \"geosite-google-gemini\", \"geosite-category-ai-chat-!cn\""; rule_name="AI-Services" ;;
-        2) rules="\"geosite-netflix\""; rule_name="Netflix" ;;
-        3) rules="\"geosite-disney\""; rule_name="Disney+" ;;
-        4) rules="\"geosite-tiktok\""; rule_name="TikTok" ;;
-        5) read -p "输入 geosite 代码 (逗号分隔): " c; rules=$(echo "$c" | sed 's/,/","/g' | sed 's/^/"geosite-/g' | sed 's/$/"/g'); rule_name="Custom-Geo" ;;
-        6) read -p "输入域名后缀 (逗号分隔): " c; rules=$(echo "$c" | sed 's/,/","/g' | sed 's/^/"./g' | sed 's/$/"/g'); rule_name="Custom-Domain" ;;
-        *) echo "无效选择"; return ;;
-    esac
+    local rules="" rule_name=""
+    if [[ -n "$service_input" ]]; then
+        local result=$(echo "$service_input" | smart_rule_input)
+        rules=$(echo "$result" | cut -d'|' -f1)
+        rule_name=$(echo "$result" | cut -d'|' -f2)
+    fi
+    [[ -z "$rules" ]] && return
 
     # 写入文件 (强制单引号)
     echo "TAG=$tag" > ${SB_NODES}/${tag}.conf
@@ -1828,26 +1922,17 @@ append_rule_to_node() {
     local target_tag="${tags[$((idx-1))]}"
     local target_file="${SB_NODES}/${target_tag}.conf"
 
-    echo -e "----------------------------"
-    echo -e "请选择要 **追加** 的新规则:"
-    echo -e "1. AI 智能全家桶"
-    echo -e "2. Netflix"
-    echo -e "3. Disney+"
-    echo -e "4. TikTok"
-    echo -e "5. 自定义 geosite"
-    echo -e "6. 自定义 域名后缀"
-    read -p "-> " r_opt
+    echo -e "${YELLOW}输入要追加的服务名称 (多个用逗号分隔)${PLAIN}"
+    echo -e "  常用: google, chatgpt, netflix, telegram, github, bilibili, ..."
+    read -p ">>> " service_input
 
-    local new_rules=""; local new_rule_name=""
-    case "$r_opt" in
-        1) new_rules="\"geosite-openai\", \"geosite-anthropic\", \"geosite-google-gemini\", \"geosite-category-ai-chat-!cn\""; new_rule_name="AI" ;;
-        2) new_rules="\"geosite-netflix\""; new_rule_name="Netflix" ;;
-        3) new_rules="\"geosite-disney\""; new_rule_name="Disney+" ;;
-        4) new_rules="\"geosite-tiktok\""; new_rule_name="TikTok" ;;
-        5) read -p "输入 geosite: " c; new_rules=$(echo "$c" | sed 's/,/","/g' | sed 's/^/"geosite-/g' | sed 's/$/"/g'); new_rule_name="CustomGeo" ;;
-        6) read -p "输入域名后缀: " c; new_rules=$(echo "$c" | sed 's/,/","/g' | sed 's/^/"./g' | sed 's/$/"/g'); new_rule_name="CustomDomain" ;;
-        *) return ;;
-    esac
+    local new_rules="" new_rule_name=""
+    if [[ -n "$service_input" ]]; then
+        local result=$(echo "$service_input" | smart_rule_input)
+        new_rules=$(echo "$result" | cut -d'|' -f1)
+        new_rule_name=$(echo "$result" | cut -d'|' -f2)
+    fi
+    [[ -z "$new_rules" ]] && return
 
     local old_rules=$(grep "^RULES=" "$target_file" | cut -d= -f2 | sed "s/^'//;s/'$//")
     local old_name=$(grep "^RULE_NAME=" "$target_file" | cut -d= -f2 | sed "s/'//g")
