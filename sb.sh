@@ -54,25 +54,24 @@ install_base() {
     mkdir -p ${SB_SERVER} ${SB_CLIENT} ${SB_CERT_ACME} ${SB_CERT_SELF} ${SB_RULE} ${SB_NODES} ${REALM_ROOT}
     for f in ${SB_SERVER}/*.json.json; do [ -e "$f" ] && mv "$f" "${f%.json}"; done
 
-    # 3. [核心修改] 智能快捷键设置 (仅在 Sing-box 已安装时触发)
+    # 3. 智能快捷键设置 (首次安装时 + 版本升级后)
     if [[ -f "${SB_BIN}" ]]; then
-        
-        # 情况 A: 本地文件运行 (下载后运行的) -> 直接复制 "$0"
+        local current_ver=$(${SB_BIN} version 2>/dev/null | head -n 1 | awk '{print $3}')
+        local cached_ver=$(cat /var/lib/sing-box/.sb_script_ver 2>/dev/null)
+
         if [[ -f "$0" && "$0" != "/usr/bin/sb" ]]; then
+            # 本地文件运行 -> 复制到 /usr/bin/sb
             cp -f "$0" /usr/bin/sb
             chmod +x /usr/bin/sb
-            echo -e "${GREEN}>>> 检测到 Sing-box 已安装，快捷键 'sb' 维护成功 (本地模式)！${PLAIN}"
-
-        # 情况 B: 管道运行 (bash <(curl...)) -> 从 GitHub 下载自身
-        # 逻辑：如果是管道运行，且系统里还没有 sb 命令，就去你的仓库下载
-        elif [[ ! -f "/usr/bin/sb" ]]; then
-            echo -e "${YELLOW}>>> 检测到管道运行且已安装内核，正在配置快捷键...${PLAIN}"
-            
-            # 👇 已填入你的专属链接 👇
-            curl -L -o /usr/bin/sb "https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/sb.sh"
-            
+            echo "$current_ver" > /var/lib/sing-box/.sb_script_ver 2>/dev/null
+        elif [[ ! -f "/usr/bin/sb" || "$current_ver" != "$cached_ver" ]]; then
+            # 管道运行 或 版本变更 -> 重新下载脚本并适配
+            echo -e "${YELLOW}>>> 检测到版本变更 (${cached_ver:-首次} -> ${current_ver})，正在更新快捷键...${PLAIN}"
+            curl -sL -o /usr/bin/sb "https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/sb.sh"
             chmod +x /usr/bin/sb
-            echo -e "${GREEN}>>> 快捷键 'sb' 已设置成功 (在线模式)！${PLAIN}"
+            mkdir -p /var/lib/sing-box
+            echo "$current_ver" > /var/lib/sing-box/.sb_script_ver
+            echo -e "${GREEN}>>> 快捷键 'sb' 已更新 (版本: ${current_ver})${PLAIN}"
         fi
     fi
 }
@@ -139,7 +138,7 @@ install_sbwpph_tool() {
     fi
 }
 
-version_ge() { test "$(echo "$@" | tr " " "\n" | sort -rV | head -n 1)" == "$1"; }
+version_ge() { [[ "$(printf "%s\n%s" "$1" "$2" | sort -V | tail -n1)" == "$1" ]]; }
 
 # ==========================================================
 # [新增] IP 获取逻辑 (读取物理网卡，剔除 Warp/Tun/Docker)
@@ -186,15 +185,48 @@ get_final_server_ip() {
 }
 # --- 2. 核心管理 ---
 
-check_arch() {
-    local arch=$(uname -m)
-    case $arch in
-        x86_64|amd64) echo "amd64" ;;
-        aarch64|arm64) echo "arm64" ;;
-        s390x) echo "s390x" ;;
-        riscv64) echo "riscv64" ;;
-        *) echo "不支持的架构: $arch"; exit 1 ;;
-    esac
+# check_arch 已内联到各处，避免重复定义
+
+
+# ==========================================================
+# [新增] sing-box 1.13+ 废弃字段自动清理
+# ==========================================================
+cleanup_deprecated_fields() {
+    local config_dir="$1"
+    [[ -z "$config_dir" ]] && config_dir="${SB_SERVER}"
+    local deprecated_fields=("tcp_fast_open" "sniff" "sniff_override_destination" "sniff_timeout")
+    local fixed=0
+
+    for f in "$config_dir"/*.json; do
+        [ -f "$f" ] || continue
+        local has_fix=0
+        for field in "${deprecated_fields[@]}"; do
+            if grep -q "\"$field\"" "$f" 2>/dev/null; then
+                has_fix=1
+                break
+            fi
+        done
+        if [[ "$has_fix" == "1" ]]; then
+            python3 -c "
+import json, sys
+try:
+    with open('$f') as fh: data = json.load(fh)
+    if 'inbounds' in data:
+        for ib in data['inbounds']:
+            for k in ['tcp_fast_open','sniff','sniff_override_destination','sniff_timeout']:
+                ib.pop(k, None)
+    if 'outbounds' in data:
+        for ob in data['outbounds']:
+            for k in ['tcp_fast_open']:
+                ob.pop(k, None)
+    with open('$f','w') as fh: json.dump(data, fh, indent=2); fh.write(chr(10))
+    print(f'  [compat] 已清理: $f')
+except: pass
+" 2>/dev/null
+            fixed=1
+        fi
+    done
+    return $fixed
 }
 
 adapt_config_to_version() {
@@ -271,28 +303,65 @@ download_rules_local() {
 }
 
 generate_base_config() {
-    # Tom 建议：基础配置极简，无 DNS 模块，日志静默 (error 级别)
-    echo -e "${GREEN}>>> 生成极简基础配置 (00_base.json) [Tom静默版]...${PLAIN}"
+    echo -e "${GREEN}>>> 生成基础配置 (00_base.json)...${PLAIN}"
 
-    cat > ${SB_SERVER}/00_base.json <<EOF
+    local cur_ver=${1#v}
+    [[ -z "$cur_ver" ]] && cur_ver=$(${SB_BIN} version 2>/dev/null | head -n 1 | awk '{print $3}')
+
+    if version_ge "$cur_ver" "1.12"; then
+        # 1.12+: DNS作为独立模块
+        cat > ${SB_SERVER}/00_base.json <<EOF
 {
-  "log": { "level": "error", "timestamp": true }
+  "log": { "level": "error", "timestamp": true },
+  "dns": {
+    "servers": [
+      { "tag": "dns-google", "address": "tls://8.8.8.8", "detour": "direct" },
+      { "tag": "dns-local", "address": "local", "detour": "direct" }
+    ],
+    "rules": [
+      { "outbound": ["any"], "server": "dns-local" }
+    ],
+    "final": "dns-google"
+  },
+  "experimental": {
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "external_ui": "ui",
+      "default_mode": "rule"
+    },
+    "cache_file": {
+      "enabled": true,
+      "path": "cache.db"
+    }
+  }
 }
 EOF
+    else
+        # 旧版本保持兼容
+        cat > ${SB_SERVER}/00_base.json <<EOF
+{
+  "log": { "level": "error", "timestamp": true },
+  "dns": {
+    "servers": [
+      { "tag": "dns-google", "address": "8.8.8.8", "address_resolver": "dns-local", "address_strategy": "prefer_ipv4" },
+      { "tag": "dns-local", "address": "local" }
+    ],
+    "rules": [
+      { "outbound": ["any"], "server": "dns-local" }
+    ],
+    "final": "dns-google"
+  }
+}
+EOF
+    fi
     format_json "${SB_SERVER}/00_base.json"
 }
 
 generate_outbounds_config() {
-    local cur_ver=${1#v}; [[ -z "$cur_ver" ]] && cur_ver=$(${SB_BIN} version | head -n 1 | awk '{print $3}')
-    if [[ "$cur_ver" =~ ^1\.1[2-9] ]] || version_ge $cur_ver "1.12"; then
-        cat > ${SB_SERVER}/02_outbounds.json <<EOF
-{ "outbounds": [ { "type": "direct", "tag": "direct" } ] }
+    # 所有版本统一：保留 direct + block (路由规则需要)
+    cat > ${SB_SERVER}/02_outbounds.json <<EOF
+{ "outbounds": [ { "type": "direct", "tag": "direct" }, { "type": "block", "tag": "block" } ] }
 EOF
-    else
-        cat > ${SB_SERVER}/02_outbounds.json <<EOF
-{ "outbounds": [ { "type": "direct", "tag": "direct" }, { "type": "block", "tag": "block" }, { "type": "dns", "tag": "dns-out" } ] }
-EOF
-    fi
     format_json "${SB_SERVER}/02_outbounds.json"
 }
 
@@ -1247,7 +1316,7 @@ EOF
     echo -e "${GREEN}>>> 锁定客户端连接 IP: ${server_ip}${PLAIN}"
 
     cat > ${SB_CLIENT}/${filename} <<EOF
-{ "type": "shadowsocks", "tag": "ss-out", "server": "${server_ip}", "server_port": ${port}, "method": "2022-blake3-aes-128-gcm", "password": "${password}", }
+{ "type": "shadowsocks", "tag": "ss-out", "server": "${server_ip}", "server_port": ${port}, "method": "2022-blake3-aes-128-gcm", "password": "${password}" }
 EOF
     format_json ${SB_SERVER}/${filename}; format_json ${SB_CLIENT}/${filename}; update_route_rules; apply_changes
 }
@@ -1920,10 +1989,20 @@ menu_routing() {
 }
 
 apply_changes() {
-    local ver=$(${SB_BIN} version | head -n 1 | awk '{print $3}')
+    local ver=$(${SB_BIN} version 2>/dev/null | head -n 1 | awk '{print $3}')
     generate_base_config "$ver"
     generate_outbounds_config "$ver"
     update_route_rules "$ver"
+    # 配置语法验证
+    echo -e "${YELLOW}>>> 正在验证配置...${PLAIN}"
+    if ! ${SB_BIN} check -D ${SB_SERVER} 2>&1; then
+        echo -e "${RED}❌ 配置验证失败，请检查上述错误！${PLAIN}"
+        read -p "按回车继续..."
+        return 1
+    fi
+    echo -e "${GREEN}✅ 配置验证通过${PLAIN}"
+    # 清理废弃字段
+    cleanup_deprecated_fields "${SB_SERVER}" 2>/dev/null
     echo -e "${YELLOW}>>> 正在重启 Sing-box 服务...${PLAIN}"
     if systemctl restart sing-box; then echo -e "${GREEN}✅ 配置已应用，服务重启成功！${PLAIN}"; else echo -e "${RED}❌ 服务重启失败！请检查日志 (Menu 11) 排查错误。${PLAIN}"; fi
     read -p "按回车继续..."
@@ -1988,8 +2067,16 @@ menu_uninstall() {
     systemctl stop sing-box; systemctl disable sing-box; rm -rf ${SB_BIN} ${SB_ROOT}
     if [[ "$u_opt" == "2" ]]; then
         echo -e "${YELLOW}正在级联清理...${PLAIN}"
+        # 清理iptables端口跳跃规则
+        iptables -t nat -F PREROUTING 2>/dev/null
+        if command -v iptables-save >/dev/null; then
+            mkdir -p /etc/iptables
+            iptables-save > /etc/iptables/rules.v4 2>/dev/null
+        fi
         apt-get purge -y nginx nginx-common; rm -rf /usr/share/nginx/html /etc/nginx; systemctl stop realm; rm -rf /usr/local/bin/realm ${REALM_ROOT} /etc/systemd/system/realm.service
         crontab -l | grep -v "singbox" | crontab -; rm -rf /root/.acme.sh
+        # 清理sing-box数据
+        rm -rf /var/lib/sing-box 2>/dev/null
     fi
     echo -e "${GREEN}卸载完成。${PLAIN}"; read -p "按回车返回..."
 }
