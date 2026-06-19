@@ -308,8 +308,34 @@ generate_base_config() {
     local cur_ver=${1#v}
     [[ -z "$cur_ver" ]] && cur_ver=$(${SB_BIN} version 2>/dev/null | head -n 1 | awk '{print $3}')
 
-    if version_ge "$cur_ver" "1.12"; then
-        # 1.12+: DNS作为独立模块
+    if version_ge "$cur_ver" "1.13"; then
+        # 1.13+: DNS server 必须带 type 字段，路由需要 default_domain_resolver
+        cat > ${SB_SERVER}/00_base.json <<EOF
+{
+  "log": { "level": "error", "timestamp": true },
+  "dns": {
+    "servers": [
+      { "type": "tls", "tag": "dns-google", "server": "8.8.8.8", "detour": "direct" },
+      { "type": "local", "tag": "dns-local", "detour": "direct" }
+    ],
+    "rules": [],
+    "final": "dns-google"
+  },
+  "experimental": {
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "external_ui": "ui",
+      "default_mode": "rule"
+    },
+    "cache_file": {
+      "enabled": true,
+      "path": "cache.db"
+    }
+  }
+}
+EOF
+    elif version_ge "$cur_ver" "1.12"; then
+        # 1.12: DNS作为独立模块
         cat > ${SB_SERVER}/00_base.json <<EOF
 {
   "log": { "level": "error", "timestamp": true },
@@ -420,8 +446,29 @@ EOF
     '
 
     # 生成最终 route.json
-    # 修复点：移除了 "default_domain_resolver" 和 "dns-out"
-    cat > ${SB_SERVER}/01_route.json <<EOF
+    if version_ge "$cur_ver" "1.13"; then
+        # 1.13+: 需要 default_domain_resolver
+        cat > ${SB_SERVER}/01_route.json <<EOF
+{
+  "route": {
+    "default_domain_resolver": {
+      "server": "dns-google"
+    },
+    "rules": [
+      { "protocol": "dns", "outbound": "direct" },
+      { "ip_is_private": true, "outbound": "block" },
+      ${rules_json}
+      { "outbound": "direct" }
+    ],
+    "rule_set": [
+      ${common_rules}
+    ],
+    "final": "direct"
+  }
+}
+EOF
+    else
+        cat > ${SB_SERVER}/01_route.json <<EOF
 {
   "route": {
     "rules": [
@@ -437,6 +484,7 @@ EOF
   }
 }
 EOF
+    fi
     # 修复 JSON 格式
     sed -i 's/, \+{\"outbound\": \"direct\"}/, {\"outbound\": \"direct\"}/' ${SB_SERVER}/01_route.json
     format_json ${SB_SERVER}/01_route.json
