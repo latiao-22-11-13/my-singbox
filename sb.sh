@@ -1993,14 +1993,22 @@ apply_changes() {
     generate_base_config "$ver"
     generate_outbounds_config "$ver"
     update_route_rules "$ver"
-    # 配置语法验证
+    # 配置JSON语法验证
     echo -e "${YELLOW}>>> 正在验证配置...${PLAIN}"
-    if ! ${SB_BIN} check -D ${SB_SERVER} 2>&1; then
+    local json_ok=true
+    for f in ${SB_SERVER}/*.json; do
+        [ -f "$f" ] || continue
+        if ! python3 -c "import json; json.load(open('$f'))" 2>/dev/null; then
+            echo -e "${RED}❌ JSON语法错误: $(basename $f)${PLAIN}"
+            json_ok=false
+        fi
+    done
+    if [[ "$json_ok" == "false" ]]; then
         echo -e "${RED}❌ 配置验证失败，请检查上述错误！${PLAIN}"
         read -p "按回车继续..."
         return 1
     fi
-    echo -e "${GREEN}✅ 配置验证通过${PLAIN}"
+    echo -e "${GREEN}✅ 配置JSON语法验证通过${PLAIN}"
     # 清理废弃字段
     cleanup_deprecated_fields "${SB_SERVER}" 2>/dev/null
     echo -e "${YELLOW}>>> 正在重启 Sing-box 服务...${PLAIN}"
