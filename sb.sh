@@ -1057,7 +1057,7 @@ add_vless() {
 
     # 写入服务端配置
     cat > ${SB_SERVER}/${filename} <<EOF
-{ "inbounds": [{ "type": "vless", "tag": "${final_tag}", "listen": "::", "listen_port": ${port}, "tcp_fast_open": true, "sniff": true, "sniff_override_destination": true, "sniff_timeout": "300ms", "users": [{"uuid": "${uuid}", "flow": "${flow}"}], ${tls_server_json}, "multiplex": ${mux} }] }
+{ "inbounds": [{ "type": "vless", "tag": "${final_tag}", "listen": "::", "listen_port": ${port}, "users": [{"uuid": "${uuid}", "flow": "${flow}"}], ${tls_server_json}, "multiplex": ${mux} }] }
 EOF
 
     # 获取真实 IP
@@ -1065,7 +1065,7 @@ EOF
     echo -e "${GREEN}>>> 锁定客户端连接 IP: ${server_ip}${PLAIN}"
 
     # 写入客户端配置
-    local client_tpl="{ \"type\": \"vless\", \"tag\": \"${final_tag}\", \"server\": \"${server_ip}\", \"server_port\": ${port}, \"uuid\": \"${uuid}\", \"flow\": \"${flow}\", \"packet_encoding\": \"xudp\", \"tcp_fast_open\": true, ${tls_client_json}"
+    local client_tpl="{ \"type\": \"vless\", \"tag\": \"${final_tag}\", \"server\": \"${server_ip}\", \"server_port\": ${port}, \"uuid\": \"${uuid}\", \"flow\": \"${flow}\", \"packet_encoding\": \"xudp\", ${tls_client_json}"
     if [[ "$is_brutal" == "1" ]]; then client_tpl="${client_tpl}, \"multiplex\": ${cmux} }"; else client_tpl="${client_tpl} }"; fi
     echo "$client_tpl" > ${SB_CLIENT}/${filename}
 
@@ -1220,14 +1220,14 @@ add_anytls() {
     fi
 
     cat > ${SB_SERVER}/${filename} <<EOF
-{ "inbounds": [ { "type": "anytls", "tag": "anytls-${slot_type}", "listen": "::", "listen_port": ${port}, "tcp_fast_open": true, "users": [ { "name": "user", "password": "${pwd}" } ], "padding_scheme": [ "stop=8", "0=30-30", "1=100-400" ], ${tls_server} } ] }
+{ "inbounds": [ { "type": "anytls", "tag": "anytls-${slot_type}", "listen": "::", "listen_port": ${port}, "users": [ { "name": "user", "password": "${pwd}" } ], "padding_scheme": [ "stop=8", "0=30-30", "1=100-400" ], ${tls_server} } ] }
 EOF
 
     # [核心修改] 获取真实 IP
     local server_ip=$(get_final_server_ip)
 
     cat > ${SB_CLIENT}/${filename} <<EOF
-{ "type": "anytls", "tag": "anytls-${slot_type}", "server": "${server_ip}", "server_port": ${port}, "password": "${pwd}", "tcp_fast_open": true, "idle_session_check_interval": "30s", "idle_session_timeout": "30s", "min_idle_session": 5, ${tls_client} }
+{ "type": "anytls", "tag": "anytls-${slot_type}", "server": "${server_ip}", "server_port": ${port}, "password": "${pwd}", "idle_session_check_interval": "30s", "idle_session_timeout": "30s", "min_idle_session": 5, ${tls_client} }
 EOF
 
     format_json ${SB_SERVER}/${filename}; format_json ${SB_CLIENT}/${filename}; update_route_rules; apply_changes
@@ -1239,7 +1239,7 @@ add_ss2022() {
     local port=$(get_safe_port "SS端口" $(shuf -i 20000-50000 -n 1)); local password=$(openssl rand -base64 16)
 
     cat > ${SB_SERVER}/${filename} <<EOF
-{ "inbounds": [{ "type": "shadowsocks", "tag": "ss-in", "listen": "::", "listen_port": ${port}, "method": "2022-blake3-aes-128-gcm", "password": "${password}", "multiplex": {"enabled": false}, "tcp_fast_open": true }] }
+{ "inbounds": [{ "type": "shadowsocks", "tag": "ss-in", "listen": "::", "listen_port": ${port}, "method": "2022-blake3-aes-128-gcm", "password": "${password}", "multiplex": {"enabled": false} }] }
 EOF
 
     # [核心修改] 获取真实 IP
@@ -1247,7 +1247,7 @@ EOF
     echo -e "${GREEN}>>> 锁定客户端连接 IP: ${server_ip}${PLAIN}"
 
     cat > ${SB_CLIENT}/${filename} <<EOF
-{ "type": "shadowsocks", "tag": "ss-out", "server": "${server_ip}", "server_port": ${port}, "method": "2022-blake3-aes-128-gcm", "password": "${password}", "tcp_fast_open": true, }
+{ "type": "shadowsocks", "tag": "ss-out", "server": "${server_ip}", "server_port": ${port}, "method": "2022-blake3-aes-128-gcm", "password": "${password}", }
 EOF
     format_json ${SB_SERVER}/${filename}; format_json ${SB_CLIENT}/${filename}; update_route_rules; apply_changes
 }
