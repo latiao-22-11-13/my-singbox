@@ -384,10 +384,19 @@ EOF
 }
 
 generate_outbounds_config() {
-    # 所有版本统一：保留 direct + block (路由规则需要)
-    cat > ${SB_SERVER}/02_outbounds.json <<EOF
+    local cur_ver=${1#v}
+    [[ -z "$cur_ver" ]] && cur_ver=$(${SB_BIN} version 2>/dev/null | head -n 1 | awk '{print $3}')
+
+    if version_ge "$cur_ver" "1.13"; then
+        # 1.13+: direct outbound 需要 domain_resolver
+        cat > ${SB_SERVER}/02_outbounds.json <<EOF
+{ "outbounds": [ { "type": "direct", "tag": "direct", "domain_resolver": { "server": "dns-google" } }, { "type": "block", "tag": "block" } ] }
+EOF
+    else
+        cat > ${SB_SERVER}/02_outbounds.json <<EOF
 { "outbounds": [ { "type": "direct", "tag": "direct" }, { "type": "block", "tag": "block" } ] }
 EOF
+    fi
     format_json "${SB_SERVER}/02_outbounds.json"
 }
 
