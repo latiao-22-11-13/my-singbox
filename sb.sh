@@ -600,6 +600,19 @@ EOF
     generate_outbounds_config "$version"
     update_route_rules "$version"
 
+    # 安装后确保快捷键生效
+    if [[ -f "${SB_BIN}" ]]; then
+        if [[ -f "$0" && "$0" != "/usr/bin/sb" ]]; then
+            cp -f "$0" /usr/bin/sb
+            chmod +x /usr/bin/sb
+        elif [[ ! -f "/usr/bin/sb" ]]; then
+            curl -sL -o /usr/bin/sb "https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/sb.sh"
+            chmod +x /usr/bin/sb
+        fi
+        mkdir -p /var/lib/sing-box
+        echo "${version#v}" > /var/lib/sing-box/.sb_script_ver 2>/dev/null
+    fi
+
     systemctl restart sing-box
     echo -e "${GREEN}Sing-box ${version} 安装成功！${PLAIN}"
 
