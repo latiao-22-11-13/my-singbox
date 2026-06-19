@@ -1307,9 +1307,18 @@ add_vless() {
     local sk=$(echo "$keys" | grep "Private" | awk -F ": " '{print $2}')
     local short_id=$(/usr/bin/sing-box generate rand --hex 8)
 
+    # kTLS 检测：内核模块已加载 且 可以插入才开启
+    local ktls_opts=""
+    if lsmod 2>/dev/null | grep -q "^tls " && modprobe tls 2>/dev/null; then
+        ktls_opts=', "kernel_tx": true, "kernel_rx": true'
+        echo -e "${GREEN}>>> kTLS 可用，已开启内核级 TLS 加速${PLAIN}"
+    else
+        echo -e "${YELLOW}>>> kTLS 不可用，使用用户态 TLS${PLAIN}"
+    fi
+
     # 构建 Reality JSON
     # 注意：这里 server_name 填的是你的 ACME 域名，但协议是 reality (private_key)
-    local tls_server_json='"tls": { "enabled": true, "server_name": "'$sni'", "reality": { "enabled": true, "handshake": {"server": "'$sni'", "server_port": 443}, "private_key": "'$sk'", "short_id": ["'$short_id'"] } }'
+    local tls_server_json='"tls": { "enabled": true, "server_name": "'$sni'"'"${ktls_opts}"'", "reality": { "enabled": true, "handshake": {"server": "'$sni'", "server_port": 443}, "private_key": "'$sk'", "short_id": ["'$short_id'"] } }'
 
     local tls_client_json='"tls": { "enabled": true, "server_name": "'$sni'", "utls": {"enabled": true, "fingerprint": "chrome"}, "reality": {"enabled": true, "public_key": "'$pk'", "short_id": "'$short_id'"} }'
 
