@@ -12,16 +12,40 @@ bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/mai
 
 ## 独立脚本
 
-| 脚本 | 说明 | 命令 |
-|------|------|------|
-| `setup.sh` | 统一管理（XanMod + Brutal + Sing-box） | `bash <(curl -Ls .../setup.sh)` |
-| `xanmod.sh` | XanMod 内核安装/卸载 | `bash <(curl -Ls .../xanmod.sh)` |
-| `brutal.sh` | TCP Brutal 模块编译安装 | `bash <(curl -Ls .../brutal.sh)` |
-| `sb.sh` | Sing-box 部署管理（含快捷键 `sb`） | `bash <(curl -Ls .../sb.sh)` |
-| `fw.sh` | 防火墙配置 | `bash <(curl -Ls .../fw.sh)` |
-| `auto-tcp.sh` | 网络优化（Reality/Mux/Brutal 专用） | `bash <(curl -Ls .../auto-tcp.sh)` |
-| `net-optimization.sh` | TCP 系统参数调优 | `bash <(curl -Ls .../net-optimization.sh)` |
-| `tcp_bdp.sh` | TCP BDP 自动调优 | `bash <(curl -Ls .../tcp_bdp.sh)` |
+**XanMod 内核安装/卸载**
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/xanmod.sh)
+```
+
+**TCP Brutal 模块编译安装**
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/brutal.sh)
+```
+
+**Sing-box 部署管理（含快捷键 `sb`）**
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/sb.sh)
+```
+
+**防火墙配置**
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/fw.sh)
+```
+
+**网络优化（Reality/Mux/Brutal 专用）**
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/auto-tcp.sh)
+```
+
+**TCP 系统参数调优**
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/net-optimization.sh)
+```
+
+**TCP BDP 自动调优**
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/tcp_bdp.sh)
+```
 
 ## 推荐部署顺序
 
