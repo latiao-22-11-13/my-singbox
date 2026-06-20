@@ -27,6 +27,11 @@ bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/mai
 bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/sb.sh)
 ```
 
+**TCP 内核调优（合并版，Mux/Reality/Brutal 专用）**
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/tcp-tuning.sh)
+```
+
 **防火墙配置**
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/main/fw.sh)
@@ -52,7 +57,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/latiao-22-11-13/my-singbox/mai
 1. **XanMod 内核** → 安装后重启
 2. **TCP Brutal** → 编译内核模块
 3. **Sing-box** → 部署代理服务
-4. **网络优化** → 按需选择 auto-tcp / net-optimization / tcp_bdp
+4. **TCP 内核调优** → 运行 tcp-tuning.sh（替代 auto-tcp + net-optimization）
 5. **防火墙** → 按需配置 fw.sh
 
 ## 系统要求
