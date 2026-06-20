@@ -195,8 +195,8 @@ function install_xanmod() {
     echo -e "${YELLOW}配置源...${PLAIN}"
     source /etc/os-release
     OS_CODENAME=$VERSION_CODENAME
-    wget -qO - https://dl.xanmod.org/archive.key | gpg --dearmor -o /usr/share/keyrings/xanmod-archive-keyring.gpg --yes
-    echo "deb [signed-by=/usr/share/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org ${OS_CODENAME} main" | tee /etc/apt/sources.list.d/xanmod-release.list
+    wget -qO - https://dl.xanmod.org/archive.key | gpg --dearmor -o /etc/apt/keyrings/xanmod-archive-keyring.gpg --yes
+    echo "deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org ${OS_CODENAME} main" | tee /etc/apt/sources.list.d/xanmod-release.list
 
     echo -e "${YELLOW}检查更新...${PLAIN}"
     apt-get update -y > /dev/null 2>&1
@@ -299,7 +299,7 @@ function remove_xanmod() {
     apt-get purge -y $xanmod_pkgs
     
     rm -f /etc/apt/sources.list.d/xanmod-release.list
-    rm -f /usr/share/keyrings/xanmod-archive-keyring.gpg
+    rm -f /etc/apt/keyrings/xanmod-archive-keyring.gpg
 
     sys_cleanup
     echo -e "${YELLOW}正在更新 GRUB 引导...${PLAIN}"
