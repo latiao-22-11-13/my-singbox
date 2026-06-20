@@ -370,6 +370,7 @@ function main_menu() {
         echo -e "============================================"
         echo -e "系统: ${YELLOW}$(get_sys_info)${PLAIN}"
         echo -e "内核: ${YELLOW}$(uname -r)${PLAIN}"
+        echo -e "Brutal: $(get_brutal_str)"
         echo -e "============================================"
         echo -e "${GREEN}1.${PLAIN} XanMod 内核管理"
         echo -e "${GREEN}2.${PLAIN} TCP Brutal 管理"
