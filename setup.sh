@@ -149,32 +149,16 @@ function install_xanmod() {
     if [[ "$del_old" != "n" && "$del_old" != "N" ]]; then
         echo -e "${YELLOW}正在清理旧内核...${PLAIN}"
         current_kernel=$(uname -r)
-        # 保留: 当前内核 + xanmod 内核 + 最新一个非xanmod非当前内核(保底)
+        # 仅保留: 当前内核 + xanmod 内核
         local all_images=($(dpkg --list | grep "^ii.*linux-image-[0-9]" | awk '{print $2}'))
-        local xanmod_images=()
-        local other_images=()
-        for img in "${all_images[@]}"; do
-            if [[ "$img" == *"$current_kernel"* ]]; then
-                continue
-            elif [[ "$img" == *"xanmod"* ]]; then
-                xanmod_images+=("$img")
-            else
-                other_images+=("$img")
-            fi
-        done
-        # other_images 按版本排序，保留最新一个作为保底
-        local sorted_others=($(printf '%s\n' "${other_images[@]}" | sort -V))
-        local keep_fallback=""
-        if [[ ${#sorted_others[@]} -gt 1 ]]; then
-            keep_fallback="${sorted_others[-1]}"
-        fi
         local to_remove=()
-        for img in "${sorted_others[@]}"; do
-            [[ "$img" == "$keep_fallback" ]] && continue
+        for img in "${all_images[@]}"; do
+            [[ "$img" == *"$current_kernel"* ]] && continue
+            [[ "$img" == *"xanmod"* ]] && continue
             to_remove+=("$img")
         done
         if [[ ${#to_remove[@]} -gt 0 ]]; then
-            echo -e "${SKYBLUE}保留: 当前($current_kernel) + XanMod + 保底($keep_fallback)${PLAIN}"
+            echo -e "${SKYBLUE}保留: 当前($current_kernel) + XanMod${PLAIN}"
             echo -e "将移除: ${to_remove[*]}"
             apt-get purge -y "${to_remove[@]}"
             update-grub

@@ -415,8 +415,8 @@ generate_base_config() {
   "log": { "level": "error", "timestamp": true },
   "dns": {
     "servers": [
-      { "type": "tls", "tag": "dns-google", "server": "8.8.8.8", "detour": "direct" },
-      { "type": "local", "tag": "dns-local", "detour": "direct" }
+      { "type": "udp", "tag": "dns-google", "server": "8.8.8.8:53", "detour": "direct" },
+      { "type": "local", "tag": "dns-local" }
     ],
     "rules": [],
     "final": "dns-google"
@@ -490,7 +490,7 @@ generate_outbounds_config() {
     if version_ge "$cur_ver" "1.13"; then
         # 1.13+: direct outbound 需要 domain_resolver
         cat > ${SB_SERVER}/02_outbounds.json <<EOF
-{ "outbounds": [ { "type": "direct", "tag": "direct", "domain_resolver": { "server": "dns-google" } }, { "type": "block", "tag": "block" } ] }
+{ "outbounds": [ { "type": "direct", "tag": "direct", "domain_resolver": { "server": "dns-local" } }, { "type": "block", "tag": "block" } ] }
 EOF
     else
         cat > ${SB_SERVER}/02_outbounds.json <<EOF
@@ -580,7 +580,7 @@ EOF
 {
   "route": {
     "default_domain_resolver": {
-      "server": "dns-google"
+      "server": "dns-local"
     },
     "rules": [
       { "protocol": "dns", "outbound": "direct" },
