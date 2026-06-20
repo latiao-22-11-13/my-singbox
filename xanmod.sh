@@ -193,8 +193,10 @@ function install_xanmod() {
     echo -e "${YELLOW}目标版本: linux-xanmod-${XANMOD_VER}${PLAIN}"
     
     echo -e "${YELLOW}配置源...${PLAIN}"
+    source /etc/os-release
+    OS_CODENAME=$VERSION_CODENAME
     wget -qO - https://dl.xanmod.org/archive.key | gpg --dearmor -o /usr/share/keyrings/xanmod-archive-keyring.gpg --yes
-    echo 'deb [signed-by=/usr/share/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' | tee /etc/apt/sources.list.d/xanmod-release.list
+    echo "deb [signed-by=/usr/share/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org ${OS_CODENAME} main" | tee /etc/apt/sources.list.d/xanmod-release.list
 
     echo -e "${YELLOW}检查更新...${PLAIN}"
     apt-get update -y > /dev/null 2>&1
