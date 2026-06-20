@@ -163,7 +163,9 @@ net.ipv4.tcp_ecn_fallback = 1
 net.ipv4.tcp_notsent_lowat = 32768
 net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_autocorking = 0
-net.ipv4.tcp_limit_output_bytes = 3145728
+# --- TCP 内存 (页为单位, 1页=4KB, 大窗口必须配合大tcp_mem) ---
+net.ipv4.tcp_mem = 65536 131072 196608
+net.ipv4.tcp_limit_output_bytes = 8388608
 
 # --- 连接管理 ---
 net.ipv4.tcp_tw_reuse = 2
